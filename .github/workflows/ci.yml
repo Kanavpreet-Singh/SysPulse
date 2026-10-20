@@ -1,0 +1,125 @@
+name: SysPulse CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Job 1: Linux Matrix Build & Test (GCC, Clang, ASan/UBSan, TSan)
+  linux-cpp:
+    name: Linux (${{ matrix.compiler }}, ${{ matrix.sanitizer || 'Release' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+            sanitizer: ""
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+            sanitizer: ""
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+            sanitizer: "asan-ubsan"
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer"
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+            sanitizer: "tsan"
+            flags: "-fsanitize=thread -fno-omit-frame-pointer"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libpthread-stubs0-dev
+
+      - name: Configure CMake
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          CMAKE_EXTRA_FLAGS=""
+          if [ -n "${{ matrix.flags }}" ]; then
+            CMAKE_EXTRA_FLAGS="-DCMAKE_CXX_FLAGS=${{ matrix.flags }} -DCMAKE_C_FLAGS=${{ matrix.flags }}"
+          fi
+          cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release ${CMAKE_EXTRA_FLAGS}
+
+      - name: Build All Targets
+        run: cmake --build build --config Release
+
+      - name: Run Test Suite
+        env:
+          ASAN_OPTIONS: "detect_leaks=1:symbolize=1"
+          TSAN_OPTIONS: "suppress_equal_stacks=1"
+        run: ctest --test-dir build --output-on-failure --verbose
+
+      - name: Upload Binaries (Release only)
+        if: matrix.sanitizer == '' && matrix.compiler == 'gcc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: syspulse-linux-binaries
+          path: |
+            build/syspulse_agent
+            build/cpu_spin
+            build/mem_leak
+            build/thread_storm
+            build/crash_test
+
+  # Job 2: Windows MSVC Build & Test
+  windows-cpp:
+    name: Windows (MSVC, /W4)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build All Targets
+        run: cmake --build build --config Release
+
+      - name: Run C++ Unit & Concurrency Tests
+        run: ctest --test-dir build -C Release --output-on-failure --verbose
+
+      - name: Upload Windows Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: syspulse-windows-binaries
+          path: |
+            build/Release/syspulse_agent.exe
+            build/Release/cpu_spin.exe
+            build/Release/mem_leak.exe
+            build/Release/handle_leak.exe
+            build/Release/thread_storm.exe
+            build/Release/crash_test.exe
+
+  # Job 3: Python PyTest & Analysis Pipeline
+  python-analysis:
+    name: Python Analysis & PyTest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy matplotlib pytest
+
+      - name: Run PyTest
+        env:
+          PYTHONPATH: ./analysis
+        run: pytest analysis/tests --verbose
