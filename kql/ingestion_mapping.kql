@@ -1,0 +1,42 @@
+// ==============================================================================
+// Azure Data Explorer Ingestion Mappings for SysPulse NDJSON Stream
+// Maps nested JSON fields from SysPulse Sample objects into relational tables.
+// ==============================================================================
+
+.create-or-alter table SysPulseSystemMetrics ingestion json mapping 'SysPulseSystemMetricsMapping'
+```
+[
+    {"column": "Timestamp", "path": "$.timestamp_ns", "transform": "DateTimeFromUnixNanoseconds"},
+    {"column": "Hostname", "path": "$.hostname"},
+    {"column": "CpuTotalPct", "path": "$.system.cpu_total_pct"},
+    {"column": "PerCorePct", "path": "$.system.per_core_pct"},
+    {"column": "MemTotalBytes", "path": "$.system.mem_total_bytes"},
+    {"column": "MemAvailableBytes", "path": "$.system.mem_available_bytes"},
+    {"column": "SwapUsedBytes", "path": "$.system.swap_used_bytes"},
+    {"column": "ContextSwitches", "path": "$.system.context_switches"},
+    {"column": "PageFaults", "path": "$.system.page_faults"},
+    {"column": "AgentCpuPct", "path": "$.self_stats.cpu_pct"},
+    {"column": "AgentRssBytes", "path": "$.self_stats.rss_bytes"},
+    {"column": "AgentDroppedSamples", "path": "$.self_stats.ring_buffer_dropped_samples"}
+]
+```
+
+// Process ingestion uses an update policy or multi-record flattening function:
+.create-or-alter function ExpandSysPulseProcesses() {
+    SysPulseRawTelemetry
+    | mv-expand Process = parse_json(ProcessesJson)
+    | project
+        Timestamp = unixtime_nanoseconds_todatetime(tolong(Process.timestamp_ns)),
+        Hostname = tostring(Hostname),
+        Pid = tolong(Process.pid),
+        Ppid = tolong(Process.ppid),
+        Name = tostring(Process.name),
+        CpuPct = toreal(Process.cpu_pct),
+        RssBytes = tolong(Process.rss_bytes),
+        VirtualBytes = tolong(Process.virtual_bytes),
+        ThreadCount = toint(Process.thread_count),
+        HandleOrFdCount = toint(Process.handle_or_fd_count),
+        IoReadBytes = tolong(Process.io_read_bytes),
+        IoWriteBytes = tolong(Process.io_write_bytes),
+        PageFaults = tolong(Process.page_faults)
+}

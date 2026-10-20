@@ -1,0 +1,117 @@
+// ==============================================================================
+// Azure Data Explorer (KQL) Production Diagnostic Queries for SysPulse
+// Note: These KQL queries are written for Azure Data Explorer / Microsoft Fabric.
+// They reflect real diagnostic patterns for OS performance triage and are not executed locally.
+// ==============================================================================
+
+// Query 1: Top Memory Growers via Linear Regression (series_fit_line)
+// Question: Which processes are exhibiting continuous monotonic memory growth (memory leaks)?
+SysPulseProcessMetrics
+| where Timestamp > ago(2h) and Pid != 0
+| make-series RssMB = max(RssBytes) / (1024 * 1024) default=0 on Timestamp step 1m by Pid, Name
+| extend (RSquare, SplitIdx, Slope, Variance) = series_fit_line(RssMB)
+| where Slope > 0.5 and RSquare > 0.85
+| project Pid, Name, Slope_MB_per_min = round(Slope, 2), RSquare = round(RSquare, 3), Variance
+| sort by Slope_MB_per_min desc
+| take 10;
+
+// Query 2: System CPU Spikes Aggregated by Time Bins
+// Question: What was the peak CPU load across the fleet, and were any cores saturated?
+SysPulseSystemMetrics
+| where Timestamp > ago(6h)
+| summarize
+    AvgCpu = round(avg(CpuTotalPct), 2),
+    P95Cpu = round(percentile(CpuTotalPct, 95), 2),
+    MaxCpu = round(max(CpuTotalPct), 2),
+    TotalPageFaults = sum(PageFaults)
+  by bin(Timestamp, 5m), Hostname
+| where MaxCpu > 80.0
+| sort by Timestamp desc;
+
+// Query 3: Machine Learning Anomaly Detection via series_decompose_anomalies
+// Question: Did system CPU utilization experience anomalous deviations from seasonal baselines?
+let min_t = ago(1d);
+let max_t = now();
+SysPulseSystemMetrics
+| where Timestamp between (min_t .. max_t)
+| make-series CpuUsage = avg(CpuTotalPct) default=0 on Timestamp step 5m by Hostname
+| extend (Anomalies, Score, Baseline) = series_decompose_anomalies(CpuUsage, 2.5, -1, 'linefit')
+| render anomalychart with(anomalycolumns=Anomalies, title="System CPU Decomposed Anomalies");
+
+// Query 4: Process Churn & Rapid Lifetime Cycling
+// Question: Are there ephemeral processes being spawned and destroyed in rapid succession?
+SysPulseKernelEvents
+| where Timestamp > ago(1h) and ProviderName == "Microsoft-Windows-Kernel-Process"
+| where EventType in ("ProcessStart", "ProcessStop")
+| summarize
+    StartCount = countif(EventType == "ProcessStart"),
+    StopCount = countif(EventType == "ProcessStop")
+  by bin(Timestamp, 1m), Hostname
+| extend ChurnRate = StartCount + StopCount
+| where ChurnRate > 50
+| sort by ChurnRate desc;
+
+// Query 5: Percentile Latency & Jitter of Telemetry Sampling Interval
+// Question: Is the agent's sampler thread maintaining its target cadence without timer drift?
+SysPulseSystemMetrics
+| where Timestamp > ago(4h)
+| serialize
+| extend DeltaMs = datetime_diff('millisecond', Timestamp, prev(Timestamp))
+| where isnotnull(DeltaMs) and DeltaMs > 0
+| summarize
+    P50_IntervalMs = percentile(DeltaMs, 50),
+    P95_IntervalMs = percentile(DeltaMs, 95),
+    P99_IntervalMs = percentile(DeltaMs, 99),
+    Max_IntervalMs = max(DeltaMs)
+  by Hostname;
+
+// Query 6: High Context Switching Rate vs. Thread Count Correlation
+// Question: Which processes are driving elevated system context switches?
+SysPulseProcessMetrics
+| where Timestamp > ago(1h)
+| summarize
+    AvgThreads = avg(ThreadCount),
+    MaxThreads = max(ThreadCount),
+    AvgCpu = avg(CpuPct)
+  by Pid, Name
+| join kind=inner (
+    SysPulseSystemMetrics
+    | where Timestamp > ago(1h)
+    | summarize AvgCtxtSwitches = avg(ContextSwitches) by bin(Timestamp, 1m)
+) on $left.Timestamp == $right.Timestamp
+| sort by AvgThreads desc
+| take 10;
+
+// Query 7: I/O Throughput Heavy Hitters
+// Question: Which processes are performing the largest volume of disk read and write transfers?
+SysPulseProcessMetrics
+| where Timestamp > ago(2h) and Pid != 0
+| summarize
+    TotalReadMB = (max(IoReadBytes) - min(IoReadBytes)) / (1024 * 1024),
+    TotalWriteMB = (max(IoWriteBytes) - min(IoWriteBytes)) / (1024 * 1024)
+  by Pid, Name, Hostname
+| extend TotalIoMB = TotalReadMB + TotalWriteMB
+| where TotalIoMB > 100
+| sort by TotalIoMB desc
+| take 15;
+
+// Query 8: Windows Kernel Handle Leak Candidates
+// Question: Which processes have an unabated upward trend in open kernel handles?
+SysPulseProcessMetrics
+| where Timestamp > ago(3h) and HandleOrFdCount > 0
+| make-series HandleCount = max(HandleOrFdCount) default=0 on Timestamp step 2m by Pid, Name
+| extend (RSquare, SplitIdx, Slope, Variance) = series_fit_line(HandleCount)
+| where Slope > 5.0 and RSquare > 0.90
+| project Pid, Name, HandleGrowthRate = round(Slope, 2), RSquare = round(RSquare, 3)
+| sort by HandleGrowthRate desc;
+
+// Query 9: Telemetry Agent Self-Overhead and Health Audit
+// Question: What is the CPU and memory footprint of the SysPulse daemon itself?
+SysPulseSystemMetrics
+| where Timestamp > ago(12h)
+| summarize
+    AvgAgentCpu = round(avg(AgentCpuPct), 3),
+    P99AgentCpu = round(percentile(AgentCpuPct, 99), 3),
+    MaxAgentRssMB = round(max(AgentRssBytes) / (1024.0 * 1024.0), 2),
+    TotalSamplesDropped = sum(AgentDroppedSamples)
+  by Hostname;

@@ -1,0 +1,47 @@
+// ==============================================================================
+// Azure Data Explorer (Kusto) Table Schema for SysPulse Telemetry
+// Note: These KQL scripts are prepared for cloud ingestion and are not executed locally.
+// ==============================================================================
+
+// System-level telemetry table
+.create table SysPulseSystemMetrics (
+    Timestamp: datetime,
+    Hostname: string,
+    CpuTotalPct: real,
+    PerCorePct: dynamic,
+    MemTotalBytes: long,
+    MemAvailableBytes: long,
+    SwapUsedBytes: long,
+    ContextSwitches: long,
+    PageFaults: long,
+    AgentCpuPct: real,
+    AgentRssBytes: long,
+    AgentDroppedSamples: long
+)
+
+// Process-level telemetry table
+.create table SysPulseProcessMetrics (
+    Timestamp: datetime,
+    Hostname: string,
+    Pid: long,
+    Ppid: long,
+    Name: string,
+    CpuPct: real,
+    RssBytes: long,
+    VirtualBytes: long,
+    ThreadCount: int,
+    HandleOrFdCount: int,
+    IoReadBytes: long,
+    IoWriteBytes: long,
+    PageFaults: long
+)
+
+// ETW / Kernel Event table
+.create table SysPulseKernelEvents (
+    Timestamp: datetime,
+    Hostname: string,
+    ProviderName: string,
+    EventType: string,
+    Pid: long,
+    Details: string
+)
