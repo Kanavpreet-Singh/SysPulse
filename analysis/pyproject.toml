@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "syspulse-analysis"
+version = "0.1.0"
+description = "Diagnostic and Anomaly Detection Pipeline for SysPulse Telemetry"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.7.0",
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+syspulse-analysis = "syspulse_analysis.cli:main"
