@@ -128,28 +128,32 @@ def write_markdown_report(
         f"- **Detected Anomalies**: {cpu_anom_count} CPU spikes, {mem_anom_count} memory rate surges",
         f"- **Flagged Memory Leaks**: {len(leaks)} process(es)\n",
         "## System Telemetry Overview\n",
-        f"![System Telemetry]({cpu_chart.name})\n",
+        f"![System Telemetry](figures/{cpu_chart.name})\n",
         "## Memory Leak Diagnostics\n",
     ]
 
     if leaks:
-        lines.append("| PID | Process Name | Leak Slope (MB/s) | $R^2$ Score | Total Growth | Confidence |")
-        lines.append("|---|---|---|---|---|---|")
+        lines.append("| PID | Process Name | Leak Slope (MB/s) | $R^2$ Score | Monotonicity | Total Growth | Confidence |")
+        lines.append("|---|---|---|---|---|---|---|")
         for lk in leaks:
             lines.append(
                 f"| `{lk['pid']}` | `{lk['name']}` | **+{lk['slope_mb_s']} MB/s** | `{lk['r_squared']}` | "
-                f"+{lk['total_growth_mb']} MB | `{int(lk['confidence'] * 100)}%` |"
+                f"`{lk['monotonicity']}` | +{lk['total_growth_mb']} MB | `{int(lk['confidence'] * 100)}%` |"
             )
         lines.append("\n")
         if leaks_chart:
-            lines.append(f"![Memory Leaks]({leaks_chart.name})\n")
+            lines.append(f"![Memory Leaks](figures/{leaks_chart.name})\n")
     else:
         lines.append("> [!NOTE]\n> No sustained linear memory growth patterns detected across monitored processes.\n")
 
     lines.extend([
-        "## Root Cause & Action Items\n",
-        "1. **Memory Leaks**: Inspect highlighted processes using GDB/Valgrind (Linux) or WinDbg `!heap` (Windows).",
-        "2. **CPU Spikes**: Cross-reference timestamps with thread dump captures or ETW trace events.",
+        "## Diagnostic Mathematical Methodology\n",
+        "- **Ordinary Least Squares (OLS) Regression**: Evaluates $y = \\beta_1 t + \\beta_0$ where $\\beta_1 = \\frac{\\sum (t - \\bar{t})(y - \\bar{y})}{\\sum (t - \\bar{t})^2}$.",
+        "- **Variance Explained ($R^2$)**: $R^2 = 1 - \\frac{SS_{\\text{res}}}{SS_{\\text{tot}}}$ verifying steady, unabated memory expansion.",
+        "- **Robust Anomaly Detection**: Median Absolute Deviation (MAD) modified z-score $M_i = \\frac{0.6745(x_i - \\tilde{x})}{\\text{MAD}}$.",
+        "\n## Root Cause & Action Items\n",
+        "1. **Memory Leaks**: Inspect flagged processes using WinDbg `!heap -p -a` (Windows) or Valgrind Memcheck / Massif (Linux).",
+        "2. **CPU Spikes**: Cross-reference timestamps with ETW thread creation events or GDB stack traces.",
     ])
 
     with open(out_path, "w", encoding="utf-8") as f:
